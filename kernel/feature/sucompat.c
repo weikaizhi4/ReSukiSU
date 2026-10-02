@@ -524,29 +524,32 @@ int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, v
 #endif
 
 #ifdef CONFIG_KSU_SUSFS
-int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags)
+int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags)
 {
     const struct cred *old_cred;
-
-    // we no need harden this check, susfs already complete in caller
-    // if (ksu_is_current_proc_unprivillege()) {
-    //     return 0;
-    // }
+    char path[sizeof(su_path) + 1] = { 0 };
 
     if (!static_branch_unlikely(&ksu_su_compat_enabled)) {
         return 0;
     }
 
-    if (unlikely(IS_ERR(*filename) || (*filename)->name == NULL))
+    if (unlikely(!filename_user))
         return 0;
 
-    if (likely(memcmp((*filename)->name, su_path, sizeof(su_path))))
+    if (!ksu_is_allow_uid_for_current(ksu_get_uid_t(current_uid())))
+        return 0;
+
+    ksu_strncpy_from_user_nofault(path, *filename_user, sizeof(path));
+    if (likely(memcmp(path, su_path, sizeof(su_path))))
+        return 0;
+
+    if (unlikely(!ksu_cred))
         return 0;
 
     old_cred = override_creds(ksu_cred);
     if (is_ksud_exists()) {
         pr_info("ksu_handle_faccessat su->sh!\n");
-        memcpy((void *)((*filename)->name), sh_path, sizeof(sh_path));
+        *filename_user = sh_user_path();
     } else {
         pr_info("no ksud found, don't process faccessat for su!");
     }
@@ -598,14 +601,10 @@ int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
 #endif
 
 #ifdef CONFIG_KSU_SUSFS
-int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)
+int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags)
 {
     const struct cred *old_cred;
-
-    // we no need harden this check, susfs already complete in caller
-    // if (ksu_is_current_proc_unprivillege()) {
-    //     return 0;
-    // }
+    char path[sizeof(su_path) + 1] = { 0 };
 
     if (!static_branch_unlikely(&ksu_su_compat_enabled)) {
         return 0;
@@ -614,18 +613,22 @@ int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)
     if (!ksu_is_allow_uid_for_current(ksu_get_uid_t(current_uid())))
         return 0;
 
-    if (unlikely(IS_ERR(*filename) || (*filename)->name == NULL)) {
+    if (unlikely(!filename_user)) {
         return 0;
     }
 
-    if (likely(memcmp((*filename)->name, su_path, sizeof(su_path)))) {
+    ksu_strncpy_from_user_nofault(path, *filename_user, sizeof(path));
+    if (likely(memcmp(path, su_path, sizeof(su_path)))) {
         return 0;
     }
+
+    if (unlikely(!ksu_cred))
+        return 0;
 
     old_cred = override_creds(ksu_cred);
     if (is_ksud_exists()) {
         pr_info("ksu_handle_stat: su->sh!\n");
-        memcpy((void *)((*filename)->name), sh_path, sizeof(sh_path));
+        *filename_user = sh_user_path();
     } else {
         pr_info("no ksud found, don't process stat for su!");
     }
